@@ -1,0 +1,126 @@
+# Deterministic checks for the patterns in rules/ that a rule engine can express.
+#
+# Stage one of the review pipeline. For anything expressible here a rule has recall 1.0
+# by construction and costs nothing, so these run before any model sees the diff — the
+# model's job is what a rule genuinely cannot express.
+#
+# Every message names the markdown rule it enforces, because a finding that cannot cite
+# its rule goes in the advisory pile (workflow/critics.md).
+#
+# Run:  uvx semgrep --config semgrep/rules.yml <path>
+
+rules:
+  - id: swallowed-exception
+    languages: [python]
+    severity: ERROR
+    message: >-
+      This caught exception is discarded. rules/error-handling.md and rules/observability.md:
+      every caught exception is re-raised, logged with context, or converted to a domain
+      error. A silent `pass` means the failure is invisible at runtime and the code appears
+      to have succeeded.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              try:
+                  ...
+              except:
+                  pass
+          - pattern: |
+              try:
+                  ...
+              except $E:
+                  pass
+          - pattern: |
+              try:
+                  ...
+              except $E as $V:
+                  pass
+
+  - id: except-returns-fallback
+    languages: [python]
+    severity: WARNING
+    message: >-
+      This handler replaces a failure with a fallback value, so a broken input and a valid
+      one produce the same result. rules/security.md: every failure path resolves to a
+      denial. If the fallback is deliberate, log the exception first so the substitution is
+      visible.
+    patterns:
+      - pattern-either:
+          - pattern: |
+              try:
+                  ...
+              except:
+                  return $X
+          - pattern: |
+              try:
+                  ...
+              except $E:
+                  return $X
+      - pattern-not: |
+          try:
+              ...
+          except $E:
+              return None
+      - pattern-not-inside: |
+          try:
+              ...
+          except $E:
+              $LOG(...)
+              ...
+
+  - id: eval-on-non-literal
+    languages: [python]
+    severity: ERROR
+    message: >-
+      eval/exec on a value that is not a literal executes whatever the caller supplies.
+      rules/security.md: every input crossing a trust boundary is validated at that
+      boundary. Without a whitelist and a restricted __builtins__ this is arbitrary code
+      execution; prefer a parser over evaluation.
+    patterns:
+      - pattern-either:
+          - pattern: eval($X, ...)
+          - pattern: exec($X, ...)
+      - pattern-not: eval("...", ...)
+      - pattern-not: exec("...", ...)
+
+  - id: sql-built-by-string
+    languages: [python]
+    severity: ERROR
+    message: >-
+      This query is assembled as a string rather than bound. rules/security.md: every query
+      uses parameter binding, on every driver. Data reaches the database as a bound
+      parameter, never as part of the query string.
+    patterns:
+      - pattern-either:
+          - pattern: $CUR.execute(f"...", ...)
+          - pattern: $CUR.execute("..." % ..., ...)
+          - pattern: $CUR.execute("..." + $X, ...)
+          - pattern: $CUR.executemany(f"...", ...)
+
+  - id: tls-verification-disabled
+    languages: [python]
+    severity: ERROR
+    message: >-
+      TLS verification is switched off. rules/security.md: hostname verification and
+      certificate-chain validation are enabled in every environment, including ones that
+      are not production today.
+    patterns:
+      - pattern-either:
+          - pattern: requests.$M(..., verify=False, ...)
+          - pattern: $SESSION.verify = False
+          - pattern: ssl._create_unverified_context(...)
+
+  - id: log-message-interpolated
+    languages: [python]
+    severity: WARNING
+    message: >-
+      This log message is interpolated before it reaches the logger. rules/observability.md:
+      every log call passes its values as structured fields or placeholders, so the message
+      stays a constant and the values stay queryable.
+    patterns:
+      - pattern-either:
+          - pattern: $LOG.info(f"...", ...)
+          - pattern: $LOG.warning(f"...", ...)
+          - pattern: $LOG.error(f"...", ...)
+          - pattern: $LOG.debug(f"...", ...)
+          - pattern: $LOG.exception(f"...", ...)
