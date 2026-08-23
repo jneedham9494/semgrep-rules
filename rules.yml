@@ -124,3 +124,25 @@ rules:
           - pattern: $LOG.error(f"...", ...)
           - pattern: $LOG.debug(f"...", ...)
           - pattern: $LOG.exception(f"...", ...)
+
+  - id: test-cannot-fail
+    languages: [python]
+    severity: WARNING
+    message: >-
+      This test function contains no assertion, so it reports the same thing however the
+      code behaves. rules/testing.md: a negative test distinguishes the two outcomes it
+      names, and a branch that prints instead of asserting cannot fail the suite.
+    patterns:
+      - pattern: |
+          def $F(...):
+              ...
+      - metavariable-regex:
+          metavariable: $F
+          regex: ^test_
+      - pattern-not: |
+          def $F(...):
+              ...
+              assert ...
+      - pattern-not-regex: assert\w*\s*\(
+      - pattern-not-regex: pytest\.(raises|warns|fail|xfail|skip)
+      - pattern-not-regex: self\.fail\s*\(
